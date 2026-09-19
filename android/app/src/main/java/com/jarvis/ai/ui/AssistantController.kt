@@ -12,6 +12,7 @@ import com.jarvis.ai.data.JarvisMemoryStore
 import com.jarvis.ai.data.JarvisPreferences
 import com.jarvis.ai.data.JarvisPreferencesStore
 import com.jarvis.ai.data.JarvisSettingsRepository
+import com.jarvis.ai.persona.Persona
 import com.jarvis.ai.persona.PersonaManager
 import com.jarvis.ai.media.Attachment
 import com.jarvis.ai.media.AttachmentManager
@@ -49,7 +50,13 @@ data class AssistantUiState(
     val error: String? = null,
     val confirmation: ConfirmationRequest? = null,
     val voiceState: VoiceState = VoiceState.IDLE,
-    val voiceError: String? = null
+    val voiceError: String? = null,
+    val model: String = "gemini-3.8-flash",
+    val temperature: Double = 0.7,
+    val persona: Persona = Persona.EQUILIBRADO,
+    val memoryEnabled: Boolean = true,
+    val voiceEnabled: Boolean = true,
+    val autoSpeakTypedMessages: Boolean = false
 )
 
 class AssistantController private constructor(private val appContext: Context) : ViewModel() {
@@ -80,7 +87,20 @@ class AssistantController private constructor(private val appContext: Context) :
 
     init {
         viewModelScope.launch {
-            preferencesStore.preferences.collect { preferences = it }
+            preferencesStore.preferences.collect { p ->
+                preferences = p
+                _state.value = _state.value.copy(
+                    persona = p.persona,
+                    memoryEnabled = p.memoryEnabled,
+                    voiceEnabled = p.voiceEnabled,
+                    autoSpeakTypedMessages = p.autoSpeakTypedMessages
+                )
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.config.collect { config ->
+                _state.value = _state.value.copy(model = config.model, temperature = config.temperature)
+            }
         }
     }
     val state: StateFlow<AssistantUiState> = _state.asStateFlow()
@@ -95,6 +115,43 @@ class AssistantController private constructor(private val appContext: Context) :
     private val voiceSession = VoiceSessionManager(voiceManager)
 
     fun setInput(value: String) { _state.value = _state.value.copy(input = value) }
+
+    fun saveModel(model: String) {
+        viewModelScope.launch {
+            val current = settingsRepository.currentConfig()
+            settingsRepository.save(current.copy(model = model.trim().ifBlank { current.model }))
+        }
+    }
+
+    fun saveTemperature(value: Double) {
+        viewModelScope.launch {
+            val current = settingsRepository.currentConfig()
+            settingsRepository.save(current.copy(temperature = value.coerceIn(0.0, 2.0)))
+        }
+    }
+
+    fun setPersona(persona: Persona) {
+        viewModelScope.launch { preferencesStore.update { it.copy(persona = persona) } }
+    }
+
+    fun setMemoryEnabled(enabled: Boolean) {
+        viewModelScope.launch { preferencesStore.update { it.copy(memoryEnabled = enabled) } }
+    }
+
+    fun setVoiceEnabled(enabled: Boolean) {
+        viewModelScope.launch { preferencesStore.update { it.copy(voiceEnabled = enabled) } }
+    }
+
+    fun setAutoSpeakTypedMessages(enabled: Boolean) {
+        viewModelScope.launch { preferencesStore.update { it.copy(autoSpeakTypedMessages = enabled) } }
+    }
+
+    fun addMemory(text: String) {
+        viewModelScope.launch { if (preferences.memoryEnabled) memoryStore.add(text) }
+    }
+
+    fun clearMemory() { viewModelScope.launch { memoryStore.clear() } }
+
 
     fun saveApiKey(value: String) {
         keyStore.save(value.trim())

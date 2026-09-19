@@ -1,5 +1,7 @@
 package com.jarvis.ai.ui
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,30 +15,51 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jarvis.ai.screencontrol.ControlSessionManager
 
 @Composable
 fun AssistantScreen(
     controller: AssistantController = viewModel(
-        factory = AssistantController.factory(androidx.compose.ui.platform.LocalContext.current)
+        factory = AssistantController.factory(LocalContext.current)
     )
 ) {
+    val context = LocalContext.current
     val state by controller.state.collectAsState()
     var apiKey by remember { mutableStateOf("") }
+    var controlActive by remember { mutableStateOf(false) }
+    var accessibilityEnabled by remember { mutableStateOf(false) }
+    val controlManager = remember { ControlSessionManager(context) }
+
+    fun refreshControlState() {
+        accessibilityEnabled = controlManager.isAccessibilityEnabled()
+        controlActive = controlManager.isControlActive()
+    }
+
+    LaunchedEffect(Unit) {
+        refreshControlState()
+    }
 
     if (state.confirmation != null) {
         AlertDialog(
             onDismissRequest = { controller.rejectPendingAction() },
             title = { Text(state.confirmation.title) },
-            text = { Text(state.confirmation.description + "\\n\\nFerramenta: " + state.confirmation.toolName) },
+            text = {
+                Text(
+                    state.confirmation.description +
+                        "\n\nFerramenta: " + state.confirmation.toolName
+                )
+            },
             confirmButton = {
                 Button(onClick = controller::confirmPendingAction) { Text("Confirmar") }
             },
@@ -47,7 +70,50 @@ fun AssistantScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("JARVIS • ${state.status}")
+        Text("JARVIS • " + state.status)
+
+        Column(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                if (controlActive) {
+                    "CONTROLE DO CELULAR ATIVO"
+                } else if (accessibilityEnabled) {
+                    "Acessibilidade disponível — controle ainda não liberado"
+                } else {
+                    "Controle do celular desativado"
+                }
+            )
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        )
+                    }
+                ) {
+                    Text("Configurar acessibilidade")
+                }
+
+                Button(
+                    onClick = {
+                        if (controlActive) {
+                            controlManager.deactivate()
+                        } else {
+                            controlManager.activate()
+                        }
+                        refreshControlState()
+                    }
+                ) {
+                    Text(if (controlActive) "Parar controle" else "Ativar controle")
+                }
+            }
+        }
 
         if (!state.apiConfigured) {
             Text(
@@ -78,7 +144,8 @@ fun AssistantScreen(
         ) {
             items(state.messages, key = { it.id }) { message ->
                 Text(
-                    "${if (message.role == ChatMessage.Role.USER) "Você" else "JARVIS"}: ${message.text}",
+                    (if (message.role == ChatMessage.Role.USER) "Você" else "JARVIS") +
+                        ": " + message.text,
                     Modifier.padding(vertical = 8.dp)
                 )
             }

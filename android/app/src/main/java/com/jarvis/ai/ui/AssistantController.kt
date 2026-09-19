@@ -46,6 +46,15 @@ class AssistantController private constructor(
     private val screenExecutor = ScreenTaskExecutor()
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
     private var agentJob: Job? = null
+    private val provider = GeminiProvider {
+        GeminiConfig(apiKey = keyStore.read().orEmpty())
+    }
+
+    private val _state = MutableStateFlow(
+        AssistantUiState(apiConfigured = !keyStore.read().isNullOrBlank())
+    )
+    val state: StateFlow<AssistantUiState> = _state.asStateFlow()
+
     private val voiceManager = VoiceManager(
         context = appContext,
         onResult = { text -> sendVoicePrompt(text) },
@@ -55,14 +64,6 @@ class AssistantController private constructor(
     )
     private val voiceSession = VoiceSessionManager(voiceManager)
 
-    private val provider = GeminiProvider {
-        GeminiConfig(apiKey = keyStore.read().orEmpty())
-    }
-
-    private val _state = MutableStateFlow(
-        AssistantUiState(apiConfigured = !keyStore.read().isNullOrBlank())
-    )
-    val state: StateFlow<AssistantUiState> = _state.asStateFlow()
 
     fun setInput(value: String) { _state.value = _state.value.copy(input = value) }
 

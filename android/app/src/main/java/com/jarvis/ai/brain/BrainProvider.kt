@@ -9,14 +9,22 @@ data class BrainRequest(
     val model: String,
     val temperature: Double = 0.7,
     val maxOutputTokens: Int = 2048,
-    val tools: List<BrainToolDefinition> = emptyList()
+    val tools: List<BrainToolDefinition> = emptyList(),
+    val multimodalParts: List<BrainMediaPart> = emptyList()
+)
+
+data class BrainMediaPart(
+    val mimeType: String,
+    val base64Data: String? = null,
+    val text: String? = null
 )
 
 data class BrainMessage(
     val role: Role,
     val content: String,
     val toolCall: BrainToolCall? = null,
-    val toolResponse: BrainToolResponse? = null
+    val toolResponse: BrainToolResponse? = null,
+    val media: List<BrainMediaPart> = emptyList()
 ) {
     enum class Role { USER, MODEL, SYSTEM, TOOL }
 }

@@ -206,7 +206,9 @@ class AssistantController private constructor(private val appContext: Context) :
                 content = message.text
             )
         }
-        if (history.none { it.role == BrainMessage.Role.USER && it.content == prompt }) history += BrainMessage(BrainMessage.Role.USER, prompt)
+        if (history.none { it.role == BrainMessage.Role.USER && it.content == prompt }) {
+            history += BrainMessage(BrainMessage.Role.USER, prompt, media = media)
+        }
 
         val tools = toolset.registry.definitions().map(BrainToolMapper::toBrainDefinition)
         for (step in 1..MAX_STEPS) {
@@ -214,7 +216,7 @@ class AssistantController private constructor(private val appContext: Context) :
             _state.value = _state.value.copy(status = if (step == 1) "THINKING" else "THINKING • ETAPA " + step + "/" + MAX_STEPS)
             when (val response = provider.generate(BrainRequest(
                 messages = history.toList(), model = GeminiConfig().model, maxOutputTokens = 2048,
-                tools = tools, multimodalParts = if (step == 1) media else emptyList()
+                tools = tools
             ))) {
                 is BrainResponse.Failure -> return Result.failure(Exception(response.error.toUserMessage()))
                 is BrainResponse.Success -> {

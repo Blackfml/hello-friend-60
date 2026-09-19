@@ -65,9 +65,26 @@ class GeminiProvider(
                                         "role",
                                         if (message.role == BrainMessage.Role.MODEL) "model" else "user"
                                     )
-                                    put("parts", JSONArray().put(
-                                        JSONObject().put("text", message.content)
-                                    ))
+                                    put("parts", JSONArray().apply {
+                                        if (message.content.isNotBlank()) {
+                                            put(JSONObject().put("text", message.content))
+                                        }
+                                        message.media.forEach { media ->
+                                            when {
+                                                !media.base64Data.isNullOrBlank() -> put(
+                                                    JSONObject().put(
+                                                        "inlineData",
+                                                        JSONObject()
+                                                            .put("mimeType", media.mimeType)
+                                                            .put("data", media.base64Data)
+                                                    )
+                                                )
+                                                !media.text.isNullOrBlank() -> put(
+                                                    JSONObject().put("text", media.text)
+                                                )
+                                            }
+                                        }
+                                    })
                                 })
                             }
                         }

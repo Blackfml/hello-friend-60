@@ -1,41 +1,28 @@
 package com.jarvis.ai.ui
 
-import android.content.Intent
-import android.provider.Settings
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jarvis.ai.screencontrol.ControlSessionManager
+import com.jarvis.ai.screencontrol.ScreenshotCaptureManager
 
 @Composable
 fun AssistantScreen(
-    controller: AssistantController = viewModel(
-        factory = AssistantController.factory(LocalContext.current)
-    )
+    controller: AssistantController = viewModel(factory = AssistantController.factory(LocalContext.current))
 ) {
     val context = LocalContext.current
     val state by controller.state.collectAsState()
@@ -43,10 +30,18 @@ fun AssistantScreen(
     var controlActive by remember { mutableStateOf(false) }
     var accessibilityEnabled by remember { mutableStateOf(false) }
     val controlManager = remember { ControlSessionManager(context) }
-    val microphoneLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
+    val screenshotManager = remember { ScreenshotCaptureManager(context) }
+
+    val microphoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) controller.startVoice()
+    }
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(controller::attachUri)
+    }
+    val screenshotLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            controller.captureScreen(result.resultCode, result.data)
+        }
     }
 
     fun refreshControlState() {
@@ -54,26 +49,15 @@ fun AssistantScreen(
         controlActive = controlManager.isControlActive()
     }
 
-    LaunchedEffect(Unit) {
-        refreshControlState()
-    }
+    LaunchedEffect(Unit) { refreshControlState() }
 
-    if (state.confirmation != null) {
+    state.confirmation?.let { confirmation ->
         AlertDialog(
-            onDismissRequest = { controller.rejectPendingAction() },
-            title = { Text(state.confirmation.title) },
-            text = {
-                Text(
-                    state.confirmation.description +
-                        "\n\nFerramenta: " + state.confirmation.toolName
-                )
-            },
-            confirmButton = {
-                Button(onClick = controller::confirmPendingAction) { Text("Confirmar") }
-            },
-            dismissButton = {
-                Button(onClick = controller::rejectPendingAction) { Text("Cancelar") }
-            }
+            onDismissRequest = controller::rejectPendingAction,
+            title = { Text(confirmation.title) },
+            text = { Text(confirmation.description + "\n\nFerramenta: " + confirmation.toolName) },
+            confirmButton = { Button(onClick = controller::confirmPendingAction) { Text("Confirmar") } },
+            dismissButton = { Button(onClick = controller::rejectPendingAction) { Text("Cancelar") } }
         )
     }
 
@@ -90,79 +74,52 @@ fun AssistantScreen(
             Modifier.padding(top = 4.dp)
         )
 
-        Column(
-            Modifier.fillMaxWidth().padding(top = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                if (controlActive) {
-                    "CONTROLE DO CELULAR ATIVO"
-                } else if (accessibilityEnabled) {
-                    "Acessibilidade disponível — controle ainda não liberado"
-                } else {
-                    "Controle do celular desativado"
-                }
+                if (controlActive) "CONTROLE DO CELULAR ATIVO"
+                else if (accessibilityEnabled) "Acessibilidade disponível — controle ainda não liberado"
+                else "Controle do celular desativado"
             )
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
-                        context.startActivity(
-                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        )
-                    }
-                ) {
-                    Text("Configurar acessibilidade")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
+                    Text("Acessibilidade")
                 }
-
-                Button(
-                    onClick = {
-                        if (controlActive) {
-                            controlManager.deactivate()
-                        } else {
-                            controlManager.activate()
-                        }
-                        refreshControlState()
-                    }
-                ) {
+                Button(onClick = {
+                    if (controlActive) controlManager.deactivate() else controlManager.activate()
+                    refreshControlState()
+                }) {
                     Text(if (controlActive) "Parar controle" else "Ativar controle")
                 }
             }
         }
 
         if (!state.apiConfigured) {
-            Text(
-                "Configure a API Key da Gemini para começar.",
-                Modifier.padding(top = 12.dp, bottom = 8.dp)
-            )
+            Text("Configure a API Key da Gemini para começar.", Modifier.padding(top = 12.dp, bottom = 8.dp))
             OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+                value = apiKey, onValueChange = { apiKey = it },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 label = { Text("Gemini API Key") }
             )
-            Button(
-                onClick = {
-                    controller.saveApiKey(apiKey)
-                    apiKey = ""
-                },
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
+            Button(onClick = { controller.saveApiKey(apiKey); apiKey = "" }, Modifier.padding(top = 8.dp)) {
                 Text("Salvar chave")
             }
         }
 
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp)
-        ) {
+        if (state.attachments.isNotEmpty()) {
+            Text("Anexos selecionados", Modifier.padding(top = 8.dp))
+            state.attachments.forEach { attachment ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text((attachment.name ?: attachment.kind.name) + " • " + attachment.mimeType, Modifier.weight(1f))
+                    TextButton(onClick = { controller.removeAttachment(attachment.id) }) { Text("Remover") }
+                }
+            }
+        }
+
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp)) {
             items(state.messages, key = { it.id }) { message ->
                 Text(
-                    (if (message.role == ChatMessage.Role.USER) "Você" else "JARVIS") +
+                    (if (message.role == ChatMessage.Role.USER) "Você" else if (message.role == ChatMessage.Role.TOOL) "Sistema" else "JARVIS") +
                         ": " + message.text,
                     Modifier.padding(vertical = 8.dp)
                 )
@@ -170,42 +127,36 @@ fun AssistantScreen(
         }
 
         OutlinedTextField(
-            value = state.input,
-            onValueChange = controller::setInput,
+            value = state.input, onValueChange = controller::setInput,
             modifier = Modifier.fillMaxWidth(),
             enabled = !state.busy && state.apiConfigured,
-            placeholder = { Text("Fale com o JARVIS") }
+            placeholder = { Text(if (state.attachments.isEmpty()) "Fale com o JARVIS" else "Diga o que fazer com o anexo") }
         )
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Button(
+                onClick = { fileLauncher.launch(arrayOf("*/*")) },
+                enabled = !state.busy && state.apiConfigured
+            ) { Text("📎 Anexo") }
+
+            Button(
+                onClick = { screenshotLauncher.launch(screenshotManager.createPermissionIntent()) },
+                enabled = !state.busy && state.apiConfigured
+            ) { Text("📱 Tela") }
+
             Button(
                 onClick = {
                     if (state.voiceState == com.jarvis.ai.voice.VoiceState.LISTENING) {
                         controller.stopVoice()
-                    } else if (androidx.core.content.ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.RECORD_AUDIO
-                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                         controller.startVoice()
-                    } else {
-                        microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
+                    } else microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 },
                 enabled = state.apiConfigured && !state.busy
-            ) {
-                Text(
-                    if (state.voiceState == com.jarvis.ai.voice.VoiceState.LISTENING) "Parar voz"
-                    else "🎙 Voz"
-                )
-            }
-            Button(
-                onClick = { controller.send() },
-                enabled = !state.busy && state.apiConfigured
-            ) {
-                Text(if (state.busy) "Analisando..." else "Enviar")
+            ) { Text(if (state.voiceState == com.jarvis.ai.voice.VoiceState.LISTENING) "Parar" else "🎙") }
+
+            Button(onClick = controller::send, enabled = !state.busy && state.apiConfigured) {
+                Text(if (state.busy) "..." else "Enviar")
             }
         }
 
@@ -213,12 +164,7 @@ fun AssistantScreen(
         state.voiceError?.let { Text(it, Modifier.padding(top = 8.dp)) }
 
         if (state.apiConfigured) {
-            Button(
-                onClick = controller::clearApiKey,
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                Text("Remover chave")
-            }
+            TextButton(onClick = controller::clearApiKey) { Text("Remover chave") }
         }
     }
 }

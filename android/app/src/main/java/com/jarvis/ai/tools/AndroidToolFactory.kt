@@ -13,7 +13,8 @@ import java.util.Date
 import java.util.Locale
 
 object AndroidToolFactory {
-    fun registerDefaults(context: Context, registry: ToolRegistry) {\n        ScreenToolFactory.registerDefaults(context, registry)
+    fun registerDefaults(context: Context, registry: ToolRegistry) {
+        ScreenToolFactory.registerDefaults(context, registry)
         registry.register(SimpleTool(ToolDefinition("get_time", "Obtém a hora e data atuais.")) {
             val text = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("pt", "BR")).format(Date())
             ToolResult.Success("Agora são $text.")

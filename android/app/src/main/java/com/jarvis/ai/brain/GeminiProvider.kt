@@ -31,7 +31,9 @@ class GeminiProvider(
                     }
                 })
                 put("generationConfig", JSONObject().apply {
-                    put("temperature", request.temperature)
+                    if (!request.model.startsWith("gemini-3.6") && !request.model.startsWith("gemini-3.8")) {
+                        put("temperature", request.temperature)
+                    }
                     put("maxOutputTokens", request.maxOutputTokens)
                 })
             }
@@ -42,6 +44,7 @@ class GeminiProvider(
                 readTimeout = 95_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("x-goog-api-key", config.apiKey)
                 setRequestProperty("Accept", "application/json")
             }
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }

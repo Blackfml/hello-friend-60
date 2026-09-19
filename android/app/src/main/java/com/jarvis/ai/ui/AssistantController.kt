@@ -119,7 +119,9 @@ class AssistantController private constructor(
                 content = message.text
             )
         }
-        history += BrainMessage(BrainMessage.Role.USER, prompt)
+        if (history.none { it.role == BrainMessage.Role.USER && it.content == prompt }) {
+            history += BrainMessage(BrainMessage.Role.USER, prompt)
+        }
 
         val tools = toolset.registry.definitions().map(BrainToolMapper::toBrainDefinition)
 

@@ -15,6 +15,9 @@ import com.jarvis.ai.tools.AndroidToolset
 import com.jarvis.ai.tools.BrainToolMapper
 import com.jarvis.ai.tools.toUserMessage
 import com.jarvis.ai.tools.ToolResult
+import com.jarvis.ai.tools.ConfirmationManager
+import com.jarvis.ai.tools.ConfirmationRequest
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +38,8 @@ data class AssistantUiState(
     val apiConfigured: Boolean = false,
     val busy: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
-    val error: String? = null
+    val error: String? = null,
+    val confirmation: ConfirmationRequest? = null
 )
 
 class AssistantController private constructor(
@@ -44,6 +48,9 @@ class AssistantController private constructor(
 
     private val keyStore = SecureApiKeyStore(appContext)
     private val toolset = AndroidToolset(appContext)
+    private val confirmationManager = ConfirmationManager()
+    private var confirmationDeferred: CompletableDeferred<Boolean>? = null
+
     private val provider = GeminiProvider {
         GeminiConfig(apiKey = keyStore.read().orEmpty())
     }
@@ -63,6 +70,14 @@ class AssistantController private constructor(
             apiConfigured = !keyStore.read().isNullOrBlank(),
             error = null
         )
+    }
+
+    fun confirmPendingAction() {
+        confirmationDeferred?.complete(true)
+    }
+
+    fun rejectPendingAction() {
+        confirmationDeferred?.complete(false)
     }
 
     fun clearApiKey() {
@@ -155,6 +170,24 @@ class AssistantController private constructor(
                             ?: return Result.failure(
                                 Exception("Ferramenta não encontrada: " + call.name)
                             )
+
+                        if (confirmationManager.requiresConfirmation(tool)) {
+                            val request = confirmationManager.createRequest(tool, call.arguments)
+                            val deferred = CompletableDeferred<Boolean>()
+                            confirmationDeferred = deferred
+                            _state.value = _state.value.copy(confirmation = request, status = "WAITING_CONFIRMATION")
+                            val approved = deferred.await()
+                            confirmationDeferred = null
+                            _state.value = _state.value.copy(confirmation = null, status = "EXECUTING")
+                            if (!approved) {
+                                history += BrainMessage(
+                                    role = BrainMessage.Role.TOOL,
+                                    content = "Ação recusada pelo usuário.",
+                                    toolResponse = BrainToolResponse(call.name, "Ação recusada pelo usuário.")
+                                )
+                                return Result.success("Tudo bem. Não executei essa ação.")
+                            }
+                        }
 
                         val result = toolset.router.execute(call.name, call.arguments)
 

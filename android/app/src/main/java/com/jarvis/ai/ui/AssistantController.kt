@@ -13,6 +13,7 @@ import com.jarvis.ai.brain.BrainToolResponse
 import com.jarvis.ai.data.SecureApiKeyStore
 import com.jarvis.ai.tools.AndroidToolset
 import com.jarvis.ai.tools.BrainToolMapper
+import com.jarvis.ai.tools.toUserMessage
 import com.jarvis.ai.tools.ToolResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

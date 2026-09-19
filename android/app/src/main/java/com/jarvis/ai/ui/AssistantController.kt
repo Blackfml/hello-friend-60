@@ -10,6 +10,7 @@ import com.jarvis.ai.brain.*
 import com.jarvis.ai.data.SecureApiKeyStore
 import com.jarvis.ai.media.Attachment
 import com.jarvis.ai.media.AttachmentManager
+import com.jarvis.ai.media.AttachmentPolicy
 import com.jarvis.ai.media.BitmapMediaEncoder
 import com.jarvis.ai.media.GeminiMediaEncoder
 import com.jarvis.ai.screencontrol.ScreenshotCaptureManager
@@ -89,6 +90,14 @@ class AssistantController private constructor(private val appContext: Context) :
         val attachment = attachmentManager.inspect(uri)
         if (attachment == null) {
             _state.value = _state.value.copy(error = "Não consegui ler esse anexo.")
+            return
+        }
+        if (!AttachmentPolicy.isSupported(attachment.mimeType)) {
+            _state.value = _state.value.copy(error = "Esse tipo de arquivo ainda não é suportado pelo JARVIS.")
+            return
+        }
+        if (attachment.sizeBytes > AttachmentPolicy.MAX_INLINE_BYTES) {
+            _state.value = _state.value.copy(error = "Esse arquivo ultrapassa o limite seguro para envio direto ao Gemini.")
             return
         }
         val media = mediaEncoder.encode(uri, attachment.mimeType)

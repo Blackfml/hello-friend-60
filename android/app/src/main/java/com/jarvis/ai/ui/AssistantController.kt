@@ -8,6 +8,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.jarvis.ai.brain.*
 import com.jarvis.ai.data.SecureApiKeyStore
+import com.jarvis.ai.data.JarvisMemoryStore
+import com.jarvis.ai.data.JarvisPreferences
+import com.jarvis.ai.data.JarvisPreferencesStore
+import com.jarvis.ai.data.JarvisSettingsRepository
+import com.jarvis.ai.persona.PersonaManager
 import com.jarvis.ai.media.Attachment
 import com.jarvis.ai.media.AttachmentManager
 import com.jarvis.ai.media.AttachmentPolicy
@@ -21,6 +26,7 @@ import com.jarvis.ai.voice.VoiceSessionManager
 import com.jarvis.ai.voice.VoiceState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +54,10 @@ data class AssistantUiState(
 
 class AssistantController private constructor(private val appContext: Context) : ViewModel() {
     private val keyStore = SecureApiKeyStore(appContext)
+    private val settingsRepository = JarvisSettingsRepository(appContext)
+    private val preferencesStore = JarvisPreferencesStore(appContext)
+    private val memoryStore = JarvisMemoryStore(appContext)
+    @Volatile private var preferences = JarvisPreferences()
     private val toolset = AndroidToolset(appContext)
     private val confirmationManager = ConfirmationManager()
     private val screenExecutor = ScreenTaskExecutor()
@@ -59,12 +69,20 @@ class AssistantController private constructor(private val appContext: Context) :
     private var agentJob: Job? = null
 
     private val provider = GeminiProvider {
-        GeminiConfig(apiKey = keyStore.read().orEmpty())
+        val base = runCatching { kotlinx.coroutines.runBlocking { settingsRepository.currentConfig() } }
+            .getOrElse { GeminiConfig(apiKey = keyStore.read().orEmpty()) }
+        PersonaManager.configWithPersona(base, preferences.persona)
     }
 
     private val _state = MutableStateFlow(
         AssistantUiState(apiConfigured = !keyStore.read().isNullOrBlank())
     )
+
+    init {
+        viewModelScope.launch {
+            preferencesStore.preferences.collect { preferences = it }
+        }
+    }
     val state: StateFlow<AssistantUiState> = _state.asStateFlow()
 
     private val voiceManager = VoiceManager(
@@ -189,7 +207,7 @@ class AssistantController private constructor(private val appContext: Context) :
                         busy = false, status = "STANDBY",
                         messages = _state.value.messages + ChatMessage(role = ChatMessage.Role.ASSISTANT, text = answer)
                     )
-                    voiceManager.speak(answer)
+                    if (preferences.voiceEnabled && preferences.autoSpeakTypedMessages) voiceManager.speak(answer)
                 }
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException || screenExecutor.isCancelled()) {
@@ -220,16 +238,33 @@ class AssistantController private constructor(private val appContext: Context) :
         }
 
         val tools = toolset.registry.definitions().map(BrainToolMapper::toBrainDefinition)
+        var noActionSteps = 0
         for (step in 1..MAX_STEPS) {
             if (screenExecutor.isCancelled()) return Result.failure(kotlinx.coroutines.CancellationException("Tarefa cancelada pelo usuário."))
             _state.value = _state.value.copy(status = if (step == 1) "THINKING" else "THINKING • ETAPA " + step + "/" + MAX_STEPS)
-            when (val response = provider.generate(BrainRequest(
-                messages = history.toList(), model = GeminiConfig().model, maxOutputTokens = 2048,
-                tools = tools
-            ))) {
+            val config = settingsRepository.currentConfig()
+            val effectiveConfig = PersonaManager.configWithPersona(config, preferences.persona)
+            val response = try {
+                withTimeout(STEP_TIMEOUT_MS) {
+                    provider.generate(BrainRequest(
+                        messages = history.toList(),
+                        model = effectiveConfig.model,
+                        temperature = effectiveConfig.temperature,
+                        maxOutputTokens = effectiveConfig.maxOutputTokens,
+                        tools = tools
+                    ))
+                }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                return Result.failure(Exception("A etapa demorou mais de ${STEP_TIMEOUT_MS / 1000}s e foi interrompida com segurança."))
+            }
+            when (response) {
                 is BrainResponse.Failure -> return Result.failure(Exception(response.error.toUserMessage()))
                 is BrainResponse.Success -> {
-                    if (response.toolCalls.isEmpty()) return Result.success(response.text.ifBlank { "Recebi o pedido, mas o Gemini não retornou uma resposta textual." })
+                    if (response.toolCalls.isEmpty()) {
+                        noActionSteps++
+                        return Result.success(response.text.ifBlank { "Recebi o pedido, mas o Gemini não retornou uma resposta textual." })
+                    }
+                    noActionSteps = 0
                     response.toolCalls.forEach { call ->
                         if (screenExecutor.isCancelled()) return Result.failure(kotlinx.coroutines.CancellationException("Tarefa cancelada pelo usuário."))
                         val tool = toolset.registry.get(call.name) ?: return Result.failure(Exception("Ferramenta não encontrada: " + call.name))
@@ -278,6 +313,9 @@ class AssistantController private constructor(private val appContext: Context) :
 
     companion object {
         private const val MAX_STEPS = 40
+        private const val MAX_NO_ACTION = 3
+        private const val MAX_RETRIES = 3
+        private const val STEP_TIMEOUT_MS = 95_000L
         fun factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = AssistantController(context.applicationContext) as T

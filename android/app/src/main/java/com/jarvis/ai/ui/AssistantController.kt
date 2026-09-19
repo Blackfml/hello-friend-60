@@ -7,6 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.jarvis.ai.brain.*
 import com.jarvis.ai.data.SecureApiKeyStore
 import com.jarvis.ai.screencontrol.ScreenTaskExecutor
+import com.jarvis.ai.voice.VoiceManager
+import com.jarvis.ai.voice.VoiceSessionManager
+import com.jarvis.ai.voice.VoiceState
 import com.jarvis.ai.tools.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -29,7 +32,9 @@ data class AssistantUiState(
     val busy: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val error: String? = null,
-    val confirmation: ConfirmationRequest? = null
+    val confirmation: ConfirmationRequest? = null,
+    val voiceState: VoiceState = VoiceState.IDLE,
+    val voiceError: String? = null
 )
 
 class AssistantController private constructor(
@@ -41,6 +46,14 @@ class AssistantController private constructor(
     private val screenExecutor = ScreenTaskExecutor()
     private var confirmationDeferred: CompletableDeferred<Boolean>? = null
     private var agentJob: Job? = null
+    private val voiceManager = VoiceManager(
+        context = appContext,
+        onResult = { text -> sendVoicePrompt(text) },
+        onState = { voiceState, error ->
+            _state.value = _state.value.copy(voiceState = voiceState, voiceError = error)
+        }
+    )
+    private val voiceSession = VoiceSessionManager(voiceManager)
 
     private val provider = GeminiProvider {
         GeminiConfig(apiKey = keyStore.read().orEmpty())
@@ -64,6 +77,31 @@ class AssistantController private constructor(
     fun confirmPendingAction() { confirmationDeferred?.complete(true) }
     fun rejectPendingAction() { confirmationDeferred?.complete(false) }
 
+    fun startVoice() {
+        if (!_state.value.apiConfigured) {
+            _state.value = _state.value.copy(voiceState = VoiceState.ERROR, voiceError = "Configure a API Key da Gemini antes de usar a voz.")
+            return
+        }
+        _state.value = _state.value.copy(voiceError = null)
+        voiceSession.start()
+    }
+
+    fun stopVoice() {
+        voiceSession.stop()
+        _state.value = _state.value.copy(voiceState = VoiceState.IDLE, voiceError = null)
+    }
+
+    fun cancelVoice() {
+        voiceSession.cancel()
+        _state.value = _state.value.copy(voiceState = VoiceState.IDLE)
+    }
+
+    private fun sendVoicePrompt(text: String) {
+        if (text.isBlank()) return
+        _state.value = _state.value.copy(input = text, voiceState = VoiceState.PROCESSING)
+        send()
+    }
+
     fun clearApiKey() {
         keyStore.clear()
         _state.value = _state.value.copy(apiConfigured = false, error = null)
@@ -81,6 +119,7 @@ class AssistantController private constructor(
         screenExecutor.cancel()
         agentJob?.cancel()
         confirmationDeferred?.cancel()
+        voiceManager.shutdown()
         super.onCleared()
     }
 
@@ -106,6 +145,7 @@ class AssistantController private constructor(
                         status = "STANDBY",
                         messages = _state.value.messages + ChatMessage(role = ChatMessage.Role.ASSISTANT, text = answer)
                     )
+                    voiceManager.speak(answer)
                 }
             }.onFailure { error ->
                 if (error is kotlinx.coroutines.CancellationException || screenExecutor.isCancelled()) {

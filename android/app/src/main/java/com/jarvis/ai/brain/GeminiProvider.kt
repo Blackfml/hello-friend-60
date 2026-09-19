@@ -16,7 +16,7 @@ class GeminiProvider(
         if (!config.isConfigured) return@withContext BrainResponse.Failure(BrainError.UNAUTHORIZED)
 
         val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" +
-            "${config.model}:generateContent?key=${config.apiKey}"
+            "${config.model}:generateContent"
 
         try {
             val body = JSONObject().apply {

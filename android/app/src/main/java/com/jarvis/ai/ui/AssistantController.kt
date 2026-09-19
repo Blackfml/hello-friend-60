@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import java.util.UUID
 
 data class ChatMessage(
@@ -78,7 +79,16 @@ class AssistantController private constructor(private val appContext: Context) :
     private val provider = GeminiProvider {
         val base = runCatching { kotlinx.coroutines.runBlocking { settingsRepository.currentConfig() } }
             .getOrElse { GeminiConfig(apiKey = keyStore.read().orEmpty()) }
-        PersonaManager.configWithPersona(base, preferences.persona)
+        val memoryText = if (preferences.memoryEnabled) {
+            runCatching { kotlinx.coroutines.runBlocking { memoryStore.memories.first() } }.getOrDefault(emptyList())
+                .takeLast(20)
+                .joinToString("\n") { "- " + it }
+        } else ""
+        val withPersona = PersonaManager.configWithPersona(base, preferences.persona)
+        withPersona.copy(
+            systemInstruction = withPersona.systemInstruction +
+                if (memoryText.isBlank()) "" else "\n\nMEMÓRIAS AUTORIZADAS PELO USUÁRIO:\n" + memoryText
+        )
     }
 
     private val _state = MutableStateFlow(

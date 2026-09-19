@@ -14,6 +14,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +43,11 @@ fun AssistantScreen(
     var controlActive by remember { mutableStateOf(false) }
     var accessibilityEnabled by remember { mutableStateOf(false) }
     val controlManager = remember { ControlSessionManager(context) }
+    val microphoneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) controller.startVoice()
+    }
 
     fun refreshControlState() {
         accessibilityEnabled = controlManager.isAccessibilityEnabled()
@@ -71,6 +79,16 @@ fun AssistantScreen(
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("JARVIS • " + state.status)
+        Text(
+            when (state.voiceState) {
+                com.jarvis.ai.voice.VoiceState.IDLE -> "Voz: pronta"
+                com.jarvis.ai.voice.VoiceState.LISTENING -> "Voz: ouvindo..."
+                com.jarvis.ai.voice.VoiceState.PROCESSING -> "Voz: processando..."
+                com.jarvis.ai.voice.VoiceState.SPEAKING -> "Voz: falando..."
+                com.jarvis.ai.voice.VoiceState.ERROR -> "Voz: erro"
+            },
+            Modifier.padding(top = 4.dp)
+        )
 
         Column(
             Modifier.fillMaxWidth().padding(top = 12.dp),
@@ -161,8 +179,28 @@ fun AssistantScreen(
 
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            Button(
+                onClick = {
+                    if (state.voiceState == com.jarvis.ai.voice.VoiceState.LISTENING) {
+                        controller.stopVoice()
+                    } else if (androidx.core.content.ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.RECORD_AUDIO
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        controller.startVoice()
+                    } else {
+                        microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                enabled = state.apiConfigured && !state.busy
+            ) {
+                Text(
+                    if (state.voiceState == com.jarvis.ai.voice.VoiceState.LISTENING) "Parar voz"
+                    else "🎙 Voz"
+                )
+            }
             Button(
                 onClick = { controller.send() },
                 enabled = !state.busy && state.apiConfigured
@@ -172,6 +210,7 @@ fun AssistantScreen(
         }
 
         state.error?.let { Text(it, Modifier.padding(top = 8.dp)) }
+        state.voiceError?.let { Text(it, Modifier.padding(top = 8.dp)) }
 
         if (state.apiConfigured) {
             Button(

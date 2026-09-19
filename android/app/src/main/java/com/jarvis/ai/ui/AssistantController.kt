@@ -311,19 +311,14 @@ class AssistantController private constructor(private val appContext: Context) :
             _state.value = _state.value.copy(status = if (step == 1) "THINKING" else "THINKING • ETAPA " + step + "/" + MAX_STEPS)
             val config = settingsRepository.currentConfig()
             val effectiveConfig = PersonaManager.configWithPersona(config, preferences.persona)
-            val response = try {
-                withTimeout(STEP_TIMEOUT_MS) {
-                    provider.generate(BrainRequest(
-                        messages = history.toList(),
-                        model = effectiveConfig.model,
-                        temperature = effectiveConfig.temperature,
-                        maxOutputTokens = effectiveConfig.maxOutputTokens,
-                        tools = tools
-                    ))
-                }
-            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-                return Result.failure(Exception("A etapa demorou mais de ${STEP_TIMEOUT_MS / 1000}s e foi interrompida com segurança."))
-            }
+            val request = BrainRequest(
+                messages = history.toList(),
+                model = effectiveConfig.model,
+                temperature = effectiveConfig.temperature,
+                maxOutputTokens = effectiveConfig.maxOutputTokens,
+                tools = tools
+            )
+            val response = generateWithRetry(request)
             when (response) {
                 is BrainResponse.Failure -> return Result.failure(Exception(response.error.toUserMessage()))
                 is BrainResponse.Success -> {
@@ -375,12 +370,29 @@ class AssistantController private constructor(private val appContext: Context) :
         return Result.failure(Exception("A tarefa atingiu o limite de " + MAX_STEPS + " etapas sem uma conclusão segura."))
     }
 
+    private suspend fun generateWithRetry(request: BrainRequest): BrainResponse {
+        var last: BrainResponse = BrainResponse.Failure(BrainError.UNKNOWN)
+        repeat(MAX_RETRIES) { attempt ->
+            if (screenExecutor.isCancelled()) return BrainResponse.Failure(BrainError.UNKNOWN)
+            last = try {
+                withTimeout(STEP_TIMEOUT_MS) { provider.generate(request) }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                BrainResponse.Failure(BrainError.TIMEOUT)
+            }
+            if (last is BrainResponse.Success) return last
+            val error = (last as BrainResponse.Failure).error
+            val retryable = error == BrainError.NETWORK || error == BrainError.TIMEOUT || error == BrainError.RATE_LIMITED
+            if (!retryable || attempt == MAX_RETRIES - 1) return last
+            kotlinx.coroutines.delay(700L * (attempt + 1))
+        }
+        return last
+    }
+
     private fun isScreenAction(name: String) = name in setOf("ler_tela", "tocar_a_tela", "digitar_a_tela", "rolar_a_tela", "botao_do_sistema")
     private fun requiresScreenChange(name: String) = name in setOf("tocar_a_tela", "digitar_a_tela", "rolar_a_tela", "botao_do_sistema")
 
     companion object {
         private const val MAX_STEPS = 40
-        private const val MAX_NO_ACTION = 3
         private const val MAX_RETRIES = 3
         private const val STEP_TIMEOUT_MS = 95_000L
         fun factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {

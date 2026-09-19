@@ -29,6 +29,7 @@ fun AssistantScreen(
     var apiKey by remember { mutableStateOf("") }
     var controlActive by remember { mutableStateOf(false) }
     var accessibilityEnabled by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     val controlManager = remember { ControlSessionManager(context) }
     val screenshotManager = remember { ScreenshotCaptureManager(context) }
 
@@ -51,6 +52,10 @@ fun AssistantScreen(
 
     LaunchedEffect(Unit) { refreshControlState() }
 
+    if (showSettings) {
+        JarvisSettingsDialog(state = state, controller = controller, onDismiss = { showSettings = false })
+    }
+
     state.confirmation?.let { confirmation ->
         AlertDialog(
             onDismissRequest = controller::rejectPendingAction,
@@ -62,7 +67,10 @@ fun AssistantScreen(
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("JARVIS • " + state.status)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column { Text("JARVIS • " + state.status); Text("Modelo: " + state.model + " • " + state.persona.title) }
+            TextButton(onClick = { showSettings = true }) { Text("⚙ Configurações") }
+        }
         Text(
             when (state.voiceState) {
                 com.jarvis.ai.voice.VoiceState.IDLE -> "Voz: pronta"
